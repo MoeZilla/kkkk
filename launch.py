@@ -10,7 +10,7 @@ import json
 from modules import cmd_args
 from modules.paths_internal import script_path, extensions_dir
 
-commandline_args = os.environ.get('COMMANDLINE_ARGS', "")
+commandline_args = "--skip-torch-cuda-test"
 sys.argv += shlex.split(commandline_args)
 
 args, _ = cmd_args.parser.parse_known_args()
@@ -23,7 +23,7 @@ skip_install = False
 dir_repos = "repositories"
 
 if 'GRADIO_ANALYTICS_ENABLED' not in os.environ:
-    os.environ['GRADIO_ANALYTICS_ENABLED'] = 'False'
+    os.environ['GRADIO_ANALYTICS_ENABLED'] = 'True'
 
 
 def check_python_version():
