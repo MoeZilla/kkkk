@@ -35,7 +35,7 @@ from modules.call_queue import wrap_queued_call, queue_lock, wrap_gradio_gpu_cal
 # Truncate version number of nightly/local build of PyTorch to not cause exceptions with CodeFormer or Safetensors
 if ".dev" in torch.__version__ or "+git" in torch.__version__:
     torch.__long_version__ = torch.__version__
-    torch.__version__ = re.search(r'[\d.]+[\d]', torch.__version__).group(0)
+    torch.__version__ = re.search(r'[\d.]+[\d]', torch.__version__)[0]
 
 from modules import shared, devices, sd_samplers, upscaler, extensions, localization, ui_tempdir, ui_extra_networks
 import modules.codeformer_model as codeformer
@@ -84,10 +84,10 @@ there are reports of issues with training tab on the latest version.
 Use --skip-version-check commandline argument to disable this check.
         """.strip())
 
-    expected_xformers_version = "0.0.16rc425"
     if shared.xformers_available:
         import xformers
 
+        expected_xformers_version = "0.0.16rc425"
         if version.parse(xformers.__version__) < version.parse(expected_xformers_version):
             errors.print_error_explanation(f"""
 You are running xformers {xformers.__version__}.
@@ -225,7 +225,10 @@ def api_only():
     modules.script_callbacks.app_started_callback(None, app)
 
     print(f"Startup time: {startup_timer.summary()}.")
-    api.launch(server_name="0.0.0.0" if cmd_opts.listen else "127.0.0.1", port=cmd_opts.port if cmd_opts.port else 7861)
+    api.launch(
+        server_name="0.0.0.0" if cmd_opts.listen else "127.0.0.1",
+        port=cmd_opts.port or 7861,
+    )
 
 
 def webui():
@@ -251,7 +254,7 @@ def webui():
             gradio_auth_creds += [x.strip() for x in cmd_opts.gradio_auth.strip('"').replace('\n', '').split(',') if x.strip()]
         if cmd_opts.gradio_auth_path:
             with open(cmd_opts.gradio_auth_path, 'r', encoding="utf8") as file:
-                for line in file.readlines():
+                for line in file:
                     gradio_auth_creds += [x.strip() for x in line.split(',') if x.strip()]
 
         app, local_url, share_url = shared.demo.launch(
