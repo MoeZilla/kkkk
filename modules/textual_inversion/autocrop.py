@@ -54,9 +54,7 @@ def crop_image(im, settings):
 
   crop = [x1, y1, x2, y2]
 
-  results = []
-
-  results.append(im.crop(tuple(crop)))
+  results = [im.crop(tuple(crop))]
 
   if settings.annotate_image:
     d = ImageDraw.Draw(im_debug)
@@ -255,12 +253,12 @@ def image_entropy_points(im, settings):
 
 
 def image_entropy(im):
-    # greyscale image entropy
-    # band = np.asarray(im.convert("L"))
-    band = np.asarray(im.convert("1"), dtype=np.uint8)
-    hist, _ = np.histogram(band, bins=range(0, 256))
-    hist = hist[hist > 0]
-    return -np.log2(hist / hist.sum()).sum()
+  # greyscale image entropy
+  # band = np.asarray(im.convert("L"))
+  band = np.asarray(im.convert("1"), dtype=np.uint8)
+  hist, _ = np.histogram(band, bins=range(256))
+  hist = hist[hist > 0]
+  return -np.log2(hist / hist.sum()).sum()
 
 def centroid(pois):
   x = [poi.x for poi in pois]
@@ -295,7 +293,6 @@ def is_square(w, h):
 
 
 def download_and_cache_models(dirname):
-  download_url = 'https://github.com/opencv/opencv_zoo/blob/91fb0290f50896f38a0ab1e558b74b16bc009428/models/face_detection_yunet/face_detection_yunet_2022mar.onnx?raw=true'
   model_file_name = 'face_detection_yunet.onnx'
 
   if not os.path.exists(dirname):
@@ -303,14 +300,13 @@ def download_and_cache_models(dirname):
 
   cache_file = os.path.join(dirname, model_file_name)
   if not os.path.exists(cache_file):
+    download_url = 'https://github.com/opencv/opencv_zoo/blob/91fb0290f50896f38a0ab1e558b74b16bc009428/models/face_detection_yunet/face_detection_yunet_2022mar.onnx?raw=true'
     print(f"downloading face detection model from '{download_url}' to '{cache_file}'")
     response = requests.get(download_url)
     with open(cache_file, "wb") as f:
       f.write(response.content)
 
-  if os.path.exists(cache_file):
-    return cache_file
-  return None
+  return cache_file if os.path.exists(cache_file) else None
 
 
 class PointOfInterest:

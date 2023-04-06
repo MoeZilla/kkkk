@@ -94,7 +94,9 @@ class NoiseScheduleVP:
         """
 
         if schedule not in ['discrete', 'linear', 'cosine']:
-            raise ValueError("Unsupported noise schedule {}. The schedule needs to be 'discrete' or 'linear' or 'cosine'".format(schedule))
+            raise ValueError(
+                f"Unsupported noise schedule {schedule}. The schedule needs to be 'discrete' or 'linear' or 'cosine'"
+            )
 
         self.schedule = schedule
         if schedule == 'discrete':
@@ -116,12 +118,7 @@ class NoiseScheduleVP:
             self.cosine_t_max = math.atan(self.cosine_beta_max * (1. + self.cosine_s) / math.pi) * 2. * (1. + self.cosine_s) / math.pi - self.cosine_s
             self.cosine_log_alpha_0 = math.log(math.cos(self.cosine_s / (1. + self.cosine_s) * math.pi / 2.))
             self.schedule = schedule
-            if schedule == 'cosine':
-                # For the cosine schedule, T = 1 will have numerical issues. So we manually set the ending time T.
-                # Note that T = 0.9946 may be not the optimal setting. However, we find it works well.
-                self.T = 0.9946
-            else:
-                self.T = 1.
+            self.T = 0.9946 if schedule == 'cosine' else 1.
 
     def marginal_log_mean_coeff(self, t):
         """
@@ -133,8 +130,7 @@ class NoiseScheduleVP:
             return -0.25 * t ** 2 * (self.beta_1 - self.beta_0) - 0.5 * t * self.beta_0
         elif self.schedule == 'cosine':
             log_alpha_fn = lambda s: torch.log(torch.cos((s + self.cosine_s) / (1. + self.cosine_s) * math.pi / 2.))
-            log_alpha_t =  log_alpha_fn(t) - self.cosine_log_alpha_0
-            return log_alpha_t
+            return log_alpha_fn(t) - self.cosine_log_alpha_0
 
     def marginal_alpha(self, t):
         """
@@ -171,8 +167,7 @@ class NoiseScheduleVP:
         else:
             log_alpha = -0.5 * torch.logaddexp(-2. * lamb, torch.zeros((1,)).to(lamb))
             t_fn = lambda log_alpha_t: torch.arccos(torch.exp(log_alpha_t + self.cosine_log_alpha_0)) * 2. * (1. + self.cosine_s) / math.pi - self.cosine_s
-            t = t_fn(log_alpha)
-            return t
+            return t_fn(log_alpha)
 
 
 def model_wrapper(
@@ -337,30 +332,36 @@ def model_wrapper(
         elif guidance_type == "classifier-free":
             if guidance_scale == 1. or unconditional_condition is None:
                 return noise_pred_fn(x, t_continuous, cond=condition)
+            x_in = torch.cat([x] * 2)
+            t_in = torch.cat([t_continuous] * 2)
+            if isinstance(condition, dict):
+                assert isinstance(unconditional_condition, dict)
+                c_in = {}
+                for k in condition:
+                    c_in[k] = (
+                        [
+                            torch.cat(
+                                [
+                                    unconditional_condition[k][i],
+                                    condition[k][i],
+                                ]
+                            )
+                            for i in range(len(condition[k]))
+                        ]
+                        if isinstance(condition[k], list)
+                        else torch.cat(
+                            [unconditional_condition[k], condition[k]]
+                        )
+                    )
+            elif isinstance(condition, list):
+                c_in = []
+                assert isinstance(unconditional_condition, list)
+                for i in range(len(condition)):
+                    c_in.append(torch.cat([unconditional_condition[i], condition[i]]))
             else:
-                x_in = torch.cat([x] * 2)
-                t_in = torch.cat([t_continuous] * 2)
-                if isinstance(condition, dict):
-                    assert isinstance(unconditional_condition, dict)
-                    c_in = dict()
-                    for k in condition:
-                        if isinstance(condition[k], list):
-                            c_in[k] = [torch.cat([
-                                unconditional_condition[k][i],
-                                condition[k][i]]) for i in range(len(condition[k]))]
-                        else:
-                            c_in[k] = torch.cat([
-                                unconditional_condition[k],
-                                condition[k]])
-                elif isinstance(condition, list):
-                    c_in = list()
-                    assert isinstance(unconditional_condition, list)
-                    for i in range(len(condition)):
-                        c_in.append(torch.cat([unconditional_condition[i], condition[i]]))
-                else:
-                    c_in = torch.cat([unconditional_condition, condition])
-                noise_uncond, noise = noise_pred_fn(x_in, t_in, cond=c_in).chunk(2)
-                return noise_uncond + guidance_scale * (noise - noise_uncond)
+                c_in = torch.cat([unconditional_condition, condition])
+            noise_uncond, noise = noise_pred_fn(x_in, t_in, cond=c_in).chunk(2)
+            return noise_uncond + guidance_scale * (noise - noise_uncond)
 
     assert model_type in ["noise", "x_start", "v"]
     assert guidance_type in ["uncond", "classifier", "classifier-free"]
@@ -466,10 +467,17 @@ class UniPC:
             return torch.linspace(t_T, t_0, N + 1).to(device)
         elif skip_type == 'time_quadratic':
             t_order = 2
-            t = torch.linspace(t_T**(1. / t_order), t_0**(1. / t_order), N + 1).pow(t_order).to(device)
-            return t
+            return (
+                torch.linspace(
+                    t_T ** (1.0 / t_order), t_0 ** (1.0 / t_order), N + 1
+                )
+                .pow(t_order)
+                .to(device)
+            )
         else:
-            raise ValueError("Unsupported skip_type {}, need to be 'logSNR' or 'time_uniform' or 'time_quadratic'".format(skip_type))
+            raise ValueError(
+                f"Unsupported skip_type {skip_type}, need to be 'logSNR' or 'time_uniform' or 'time_quadratic'"
+            )
 
     def get_orders_and_timesteps_for_singlestep_solver(self, steps, order, skip_type, t_T, t_0, device):
         """
@@ -513,9 +521,8 @@ class UniPC:
             t = t.view(-1)
         if 'bh' in self.variant:
             return self.multistep_uni_pc_bh_update(x, model_prev_list, t_prev_list, t, order, **kwargs)
-        else:
-            assert self.variant == 'vary_coeff'
-            return self.multistep_uni_pc_vary_update(x, model_prev_list, t_prev_list, t, order, **kwargs)
+        assert self.variant == 'vary_coeff'
+        return self.multistep_uni_pc_vary_update(x, model_prev_list, t_prev_list, t, order, **kwargs)
 
     def multistep_uni_pc_vary_update(self, x, model_prev_list, t_prev_list, t, order, use_corrector=True):
         #print(f'using unified predictor-corrector with order {order} (solver type: vary coeff)')
@@ -556,7 +563,7 @@ class UniPC:
             col = col * rks / (k + 1)
         C = torch.stack(C, dim=1)
 
-        if len(D1s) > 0:
+        if D1s:
             D1s = torch.stack(D1s, dim=1) # (B, K)
             C_inv_p = torch.linalg.inv(C[:-1, :-1])
             A_p = C_inv_p
@@ -677,7 +684,7 @@ class UniPC:
 
         # now predictor
         use_predictor = len(D1s) > 0 and x_t is None
-        if len(D1s) > 0:
+        if D1s:
             D1s = torch.stack(D1s, dim=1) # (B, K)
             if x_t is None:
                 # for order 2, we use a simplified version
@@ -704,10 +711,7 @@ class UniPC:
             )
 
             if x_t is None:
-                if use_predictor:
-                    pred_res = torch.einsum('k,bkchw->bchw', rhos_p, D1s)
-                else:
-                    pred_res = 0
+                pred_res = torch.einsum('k,bkchw->bchw', rhos_p, D1s) if use_predictor else 0
                 x_t = x_t_ - expand_dims(alpha_t * B_h, dims) * pred_res
 
             if use_corrector:
@@ -724,10 +728,7 @@ class UniPC:
                 - expand_dims(sigma_t * h_phi_1, dims) * model_prev_0
             )
             if x_t is None:
-                if use_predictor:
-                    pred_res = torch.einsum('k,bkchw->bchw', rhos_p, D1s)
-                else:
-                    pred_res = 0
+                pred_res = torch.einsum('k,bkchw->bchw', rhos_p, D1s) if use_predictor else 0
                 x_t = x_t_ - expand_dims(sigma_t * B_h, dims) * pred_res
 
             if use_corrector:
@@ -748,51 +749,43 @@ class UniPC:
         t_0 = 1. / self.noise_schedule.total_N if t_end is None else t_end
         t_T = self.noise_schedule.T if t_start is None else t_start
         device = x.device
-        if method == 'multistep':
-            assert steps >= order, "UniPC order must be < sampling steps"
-            timesteps = self.get_time_steps(skip_type=skip_type, t_T=t_T, t_0=t_0, N=steps, device=device)
-            #print(f"Running UniPC Sampling with {timesteps.shape[0]} timesteps, order {order}")
-            assert timesteps.shape[0] - 1 == steps
-            with torch.no_grad():
-                vec_t = timesteps[0].expand((x.shape[0]))
-                model_prev_list = [self.model_fn(x, vec_t)]
-                t_prev_list = [vec_t]
-                # Init the first `order` values by lower order multistep DPM-Solver.
-                for init_order in range(1, order):
-                    vec_t = timesteps[init_order].expand(x.shape[0])
-                    x, model_x = self.multistep_uni_pc_update(x, model_prev_list, t_prev_list, vec_t, init_order, use_corrector=True)
+        if method != 'multistep':
+            raise NotImplementedError()
+        assert steps >= order, "UniPC order must be < sampling steps"
+        timesteps = self.get_time_steps(skip_type=skip_type, t_T=t_T, t_0=t_0, N=steps, device=device)
+        #print(f"Running UniPC Sampling with {timesteps.shape[0]} timesteps, order {order}")
+        assert timesteps.shape[0] - 1 == steps
+        with torch.no_grad():
+            vec_t = timesteps[0].expand((x.shape[0]))
+            model_prev_list = [self.model_fn(x, vec_t)]
+            t_prev_list = [vec_t]
+            # Init the first `order` values by lower order multistep DPM-Solver.
+            for init_order in range(1, order):
+                vec_t = timesteps[init_order].expand(x.shape[0])
+                x, model_x = self.multistep_uni_pc_update(x, model_prev_list, t_prev_list, vec_t, init_order, use_corrector=True)
+                if model_x is None:
+                    model_x = self.model_fn(x, vec_t)
+                if self.after_update is not None:
+                    self.after_update(x, model_x)
+                model_prev_list.append(model_x)
+                t_prev_list.append(vec_t)
+            for step in trange(order, steps + 1):
+                vec_t = timesteps[step].expand(x.shape[0])
+                step_order = min(order, steps + 1 - step) if lower_order_final else order
+                    #print('this step order:', step_order)
+                use_corrector = step != steps
+                x, model_x =  self.multistep_uni_pc_update(x, model_prev_list, t_prev_list, vec_t, step_order, use_corrector=use_corrector)
+                if self.after_update is not None:
+                    self.after_update(x, model_x)
+                for i in range(order - 1):
+                    t_prev_list[i] = t_prev_list[i + 1]
+                    model_prev_list[i] = model_prev_list[i + 1]
+                t_prev_list[-1] = vec_t
+                # We do not need to evaluate the final model value.
+                if step < steps:
                     if model_x is None:
                         model_x = self.model_fn(x, vec_t)
-                    if self.after_update is not None:
-                        self.after_update(x, model_x)
-                    model_prev_list.append(model_x)
-                    t_prev_list.append(vec_t)
-                for step in trange(order, steps + 1):
-                    vec_t = timesteps[step].expand(x.shape[0])
-                    if lower_order_final:
-                        step_order = min(order, steps + 1 - step)
-                    else:
-                        step_order = order
-                    #print('this step order:', step_order)
-                    if step == steps:
-                        #print('do not run corrector at the last step')
-                        use_corrector = False
-                    else:
-                        use_corrector = True
-                    x, model_x =  self.multistep_uni_pc_update(x, model_prev_list, t_prev_list, vec_t, step_order, use_corrector=use_corrector)
-                    if self.after_update is not None:
-                        self.after_update(x, model_x)
-                    for i in range(order - 1):
-                        t_prev_list[i] = t_prev_list[i + 1]
-                        model_prev_list[i] = model_prev_list[i + 1]
-                    t_prev_list[-1] = vec_t
-                    # We do not need to evaluate the final model value.
-                    if step < steps:
-                        if model_x is None:
-                            model_x = self.model_fn(x, vec_t)
-                        model_prev_list[-1] = model_x
-        else:
-            raise NotImplementedError()
+                    model_prev_list[-1] = model_x
         if denoise_to_zero:
             x = self.denoise_to_zero_fn(x, torch.ones((x.shape[0],)).to(device) * t_0)
         return x
@@ -840,8 +833,7 @@ def interpolate_fn(x, xp, yp):
     y_positions_expanded = yp.unsqueeze(0).expand(N, -1, -1)
     start_y = torch.gather(y_positions_expanded, dim=2, index=start_idx2.unsqueeze(2)).squeeze(2)
     end_y = torch.gather(y_positions_expanded, dim=2, index=(start_idx2 + 1).unsqueeze(2)).squeeze(2)
-    cand = start_y + (x - start_x) * (end_y - start_y) / (end_x - start_x)
-    return cand
+    return start_y + (x - start_x) * (end_y - start_y) / (end_x - start_x)
 
 
 def expand_dims(v, dims):
